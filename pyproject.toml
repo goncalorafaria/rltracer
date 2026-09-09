@@ -1,0 +1,58 @@
+[build-system]
+requires = ["setuptools>=77", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "rltracer"
+version = "0.1.0"
+description = "Lazy inspection, analysis, visualization, and export tooling for reinforcement-learning traces."
+readme = "README.md"
+requires-python = ">=3.10"
+license = "MIT"
+authors = [{name = "Goncalo Faria"}]
+dependencies = ["fire>=0.7.1"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+]
+
+[project.optional-dependencies]
+primerl = ["msgpack>=1.0", "transformers>=4.45"]
+retemplate = ["pyarrow>=16"]
+plot = ["matplotlib>=3.8", "numpy>=1.26", "scipy>=1.12"]
+speed = ["orjson>=3.10"]
+test = ["pytest>=8", "pyarrow>=16", "msgpack>=1.0"]
+all = [
+    "msgpack>=1.0",
+    "transformers>=4.45",
+    "pyarrow>=16",
+    "matplotlib>=3.8",
+    "numpy>=1.26",
+    "scipy>=1.12",
+    "orjson>=3.10",
+]
+
+[project.urls]
+Homepage = "https://github.com/goncalorafaria/rltracer"
+Repository = "https://github.com/goncalorafaria/rltracer"
+Issues = "https://github.com/goncalorafaria/rltracer/issues"
+
+[project.scripts]
+rltracer = "rltracer.__main__:main"
+rltracer-viz = "rltracer.viz.server:main"
+rltracer-retemplate = "rltracer.retemplate:cli"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["rltracer*"]
+
+[tool.setuptools.package-data]
+rltracer = ["py.typed"]
+"rltracer.viz" = ["*.html", "*.js", "*.css"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

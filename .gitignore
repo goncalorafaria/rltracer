@@ -1,0 +1,21 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.venv/
+build/
+dist/
+
+# Trace runs and generated analysis artifacts never belong in package Git.
+*.bin
+*.jsonl
+*.parquet
+*.sqlite
+*.sqlite3
+records/
+rollouts/
+token_exports/
+outputs/
+reports/
+plots/
+data/
