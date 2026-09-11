@@ -27,10 +27,8 @@ All command-line interfaces use Fire:
 
 ```bash
 rltracer inspect --run=/path/to/run --tokenizer=/path/to/tokenizer
+rltracer-viz --browse-root=/path/to/runs --tokenizer=/path/to/tokenizer
 ```
-
-Visualization belongs to the consuming evaluation system (for JTC, Evalboard)
-rather than this trace-format library.
 
 ## Development and release
 

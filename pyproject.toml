@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "rltracer"
 version = "0.1.0"
-description = "Lazy inspection, analysis, and export tooling for reinforcement-learning traces."
+description = "Lazy inspection, analysis, visualization, and export tooling for reinforcement-learning traces."
 readme = "README.md"
 requires-python = ">=3.10"
 license = "MIT"
@@ -43,6 +43,7 @@ Issues = "https://github.com/goncalorafaria/rltracer/issues"
 
 [project.scripts]
 rltracer = "rltracer.__main__:main"
+rltracer-viz = "rltracer.viz.server:main"
 rltracer-retemplate = "rltracer.retemplate:cli"
 
 [tool.setuptools.packages.find]
@@ -51,6 +52,7 @@ include = ["rltracer*"]
 
 [tool.setuptools.package-data]
 rltracer = ["py.typed"]
+"rltracer.viz" = ["*.html", "*.js", "*.css"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
