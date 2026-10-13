@@ -18,6 +18,7 @@ from .export import (
     TraceRunSpec,
 )
 from .primerl import PrimeRLAdapter, open_prime_rl_run
+from .file_monitor import FileMonitorAdapter
 from .tracer import RLTracer
 from .workflow_jsonl import WorkflowJSONLAdapter
 
@@ -27,6 +28,7 @@ __all__ = [
     "ExportMode",
     "ExportPreferences",
     "ExportResult",
+    "FileMonitorAdapter",
     "FieldFilter",
     "PassAnalysisConfig",
     "PrimeRLAdapter",

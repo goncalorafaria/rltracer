@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import json
-import os
-import tempfile
+import hashlib
+import threading
 from http import HTTPStatus
 from http.server import HTTPServer, SimpleHTTPRequestHandler
 from pathlib import Path
@@ -12,7 +12,7 @@ from urllib.parse import parse_qs, unquote, urlparse
 
 import fire
 
-from rltracer import PrimeRLAdapter, RLTracer, WorkflowJSONLAdapter
+from rltracer import FileMonitorAdapter, PrimeRLAdapter, RLTracer, WorkflowJSONLAdapter
 from rltracer.primerl import fingerprint
 
 WEB_ROOT = Path(__file__).parent
@@ -41,7 +41,11 @@ def saved_steps(directory: Path) -> list[int]:
 
 def is_trace_run(directory: Path, input_format: str) -> bool:
     """Whether a path can be opened by the selected trace reader."""
-    return directory.is_file() if input_format == "workflow-jsonl" else bool(saved_steps(directory))
+    if input_format == "workflow-jsonl":
+        return directory.is_file()
+    if input_format == "file-monitor":
+        return (directory / "monitors/file/traces/stream").is_dir() or directory.name == "stream" or any(directory.glob("*/monitors/file/traces/stream"))
+    return bool(saved_steps(directory))
 
 
 class TraceRegistry:
@@ -70,16 +74,17 @@ class TraceRegistry:
     def tracer(self, selected: str | None) -> RLTracer:
         root = self._path_for(selected)
         if not is_trace_run(root, self.input_format):
-            expected = "workflow JSONL" if self.input_format == "workflow-jsonl" else "PrimeRL trace output"
+            expected = {"workflow-jsonl": "workflow JSONL", "file-monitor": "file-monitor run", "primerl": "PrimeRL trace output"}[self.input_format]
             raise ValueError(f"Not a {expected}: {root}")
         if root not in self.tracers:
             index_path = self.index_path if self.browse_root is None else None
             if index_path is None:
-                descriptor, temporary_index = tempfile.mkstemp(prefix="rltracer-", suffix=".sqlite", dir="/tmp")
-                os.close(descriptor)
-                index_path = Path(temporary_index)
+                key = hashlib.sha256(str(root).encode()).hexdigest()[:20]
+                index_path = Path("/tmp") / f"rltracer-{key}.sqlite"
             if self.input_format == "workflow-jsonl":
                 self.tracers[root] = RLTracer(WorkflowJSONLAdapter(root, index_path))
+            elif self.input_format == "file-monitor":
+                self.tracers[root] = RLTracer(FileMonitorAdapter(root, index_path))
             else:
                 if self.tokenizer is None:
                     raise ValueError("--tokenizer is required with --input-format primerl")
@@ -163,11 +168,18 @@ def trace_outcome(trace: object) -> dict[str, object]:
 
 
 def make_handler(registry: TraceRegistry):
+    monitor_lock = threading.RLock()
     class Handler(SimpleHTTPRequestHandler):
         def __init__(self, *args, **kwargs):
             super().__init__(*args, directory=str(WEB_ROOT), **kwargs)
 
         def do_GET(self) -> None:
+            if registry.input_format == "file-monitor" and self.path.startswith("/api/"):
+                with monitor_lock:
+                    return self._do_GET()
+            return self._do_GET()
+
+        def _do_GET(self) -> None:
             parsed = urlparse(self.path)
             path = unquote(parsed.path)
             query = parse_qs(parsed.query)
@@ -203,7 +215,12 @@ def make_handler(registry: TraceRegistry):
                     ])
                 if "/prompts/" in path and path.endswith("/trajectories"):
                     parts = path.split("/")
-                    group = tracer.step(int(parts[3])).prompt(parts[5], split)
+                    step_number = int(parts[3])
+                    prompt_key = parts[5]
+                    summaries = getattr(tracer.adapter, "list_trajectory_summaries", None)
+                    if summaries is not None:
+                        return send(self, summaries(step_number, prompt_key, split))
+                    group = tracer.step(step_number).prompt(prompt_key, split)
                     return send(
                         self,
                         [
@@ -241,8 +258,8 @@ def serve(
     """Serve one trace run or a browsable directory of PrimeRL runs."""
     if run is None and browse_root is None:
         raise ValueError("provide --run or --browse-root")
-    if input_format not in {"primerl", "workflow-jsonl"}:
-        raise ValueError("input_format must be primerl or workflow-jsonl")
+    if input_format not in {"primerl", "workflow-jsonl", "file-monitor"}:
+        raise ValueError("input_format must be primerl, workflow-jsonl, or file-monitor")
     if input_format == "workflow-jsonl" and browse_root:
         raise ValueError(
             "--browse-root is not supported with workflow-jsonl; "

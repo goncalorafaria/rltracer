@@ -76,7 +76,7 @@ class WorkflowJSONLAdapter:
                     if messages:
                         yield line_index, record, messages
 
-    def ensure_step_indexed(self, step: int) -> None:
+    def ensure_step_indexed(self, step: int, split: str | None = None) -> None:
         if step != 0:
             raise KeyError(step)
         stat = self.jsonl_path.stat()
