@@ -13,6 +13,7 @@ def test_workflow_jsonl_adapter_reads_intermediate_messages(tmp_path):
     adapter = WorkflowJSONLAdapter(path)
     try:
         assert adapter.list_steps() == [0]
+        adapter.ensure_step_indexed(0, "eval")  # Explorer passes a split argument.
         prompts = adapter.list_prompts(0)
         assert len(prompts) == 1
         trajectory = adapter.load_trajectory(adapter.list_trajectory_ids(0, prompts[0][0])[0])

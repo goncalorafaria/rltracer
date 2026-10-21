@@ -209,7 +209,8 @@ class PrimeRLAdapter:
                 if messages:
                     yield line_index, messages, record
 
-    def ensure_step_indexed(self, step: int) -> None:
+    def ensure_step_indexed(self, step: int, split: str | None = None) -> None:
+        # Index all splits together; list_prompts applies the requested split.
         shards = self._shards(step)
         trace_files = self._trace_files(step)
         sources = trace_files or shards

@@ -1,0 +1,62 @@
+<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>RLTracer · Teams</title><link rel="stylesheet" href="style.css?v=tool-cards-20261001-judge-traces"><style>
+body{margin:0;background:#11151b;color:#e5eaf0;font:14px system-ui}header{padding:18px 24px;border-bottom:1px solid #344050;display:flex;gap:20px;align-items:center}a{color:#8ecaff}select,input,button{background:#202a36;color:inherit;border:1px solid #526075;padding:8px;border-radius:6px}main{display:grid;grid-template-columns:270px 1fr;height:calc(100vh - 75px)}aside{overflow:auto;padding:15px;border-right:1px solid #344050}aside button{display:block;width:100%;text-align:left;margin:8px 0;cursor:pointer}aside button.active{border-color:#8ecaff;background:#273f54}#board{overflow:auto;padding:18px}#agents{display:grid;grid-template-columns:repeat(4,minmax(260px,1fr));gap:14px;align-items:start}.agent{background:#18202a;border:1px solid #344050;border-radius:9px;overflow:hidden}.agent>h2{position:sticky;top:0;background:#202c39;margin:0;padding:14px;font-size:16px}.conversation{max-height:75vh;overflow:auto;padding:12px}.role{font-size:11px;text-transform:uppercase;color:#8ecaff;font-weight:700}pre{white-space:pre-wrap;overflow-wrap:anywhere;font:13px/1.5 ui-monospace,monospace;margin:8px 0}summary{cursor:pointer;color:#a8bacf;margin:8px 0}.muted{color:#a8bacf}#search{width:90%;margin-top:12px}h1{font-size:19px}.answer{padding:10px;background:#22382e}#status{margin-left:auto;color:#a8bacf}
+
+/* Compact sizing only; message colors and cards come from Explorer's stylesheet. */
+header{height:auto;min-height:64px;flex-wrap:wrap;padding:12px 18px;gap:14px}
+header label{display:flex;align-items:center;gap:7px;margin:0}
+main{height:calc(100vh - 65px);grid-template-columns:240px minmax(0,1fr)}
+#board{min-width:0}#agents{gap:10px}.agent{min-width:0}.agent>h2{font-size:14px;padding:10px 12px}
+.conversation{padding:8px;font-size:12px;line-height:1.45}
+.conversation .message{margin:8px 0;padding:0;border-radius:7px}
+.conversation .message>h3{padding:6px 8px;font-size:10px;flex-wrap:wrap;overflow-wrap:anywhere}
+.conversation .message pre{padding:8px;font-size:11px;line-height:1.45;max-height:340px}
+.conversation summary{margin:0}
+.conversation .thinking>summary,.conversation .tool-output>summary{padding:7px 8px;font-size:10px}
+.conversation .markdown-body{padding:8px 10px;font-size:12px;line-height:1.5}
+.conversation .markdown-body p{margin-bottom:8px}
+.conversation .markdown-body h2{position:static;background:none;padding:0;font-size:1.3em}
+.conversation .tool-calls{grid-template-columns:minmax(0,1fr);gap:7px;padding:0 8px 8px}
+.conversation .tool-call{border-radius:8px}
+.conversation .tool-call-header{padding:7px 8px;gap:4px 6px}
+.conversation .tool-call-title>b{font-size:11px}
+.conversation .tool-call-body,.conversation .json-output{padding:7px 8px}
+.conversation .tool-call-id{font-size:8px;max-width:100%;overflow-wrap:anywhere;white-space:normal}
+.conversation .tool-call-type{font-size:9px;padding:2px 5px}
+.conversation .json-field,.conversation .tool-call .json-field{grid-template-columns:minmax(55px,28%) minmax(0,1fr);gap:6px;padding:6px}
+.conversation .json-key{font-size:10px}
+.conversation .json-value,.conversation .json-scalar{font-size:11px}
+.conversation .initial-input>summary{padding:7px 2px;font-size:11px}
+.conversation .tool-result-meta{font-size:10px;padding:6px 8px}
+@media(max-width:800px){main{grid-template-columns:1fr;height:auto}#board{padding:12px}}
+
+#agents.causal-view{display:block;min-width:1000px}
+.causal-note{color:var(--muted);font-size:12px;max-width:900px;line-height:1.5}
+.causal-grid{--lanes:4;display:grid;grid-template-columns:58px repeat(var(--lanes),minmax(220px,1fr));align-items:stretch}
+.causal-heading{position:sticky;top:-18px;z-index:2;background:#202c39;padding:10px;border-bottom:2px solid var(--accent);font-weight:700}
+.causal-number{font:10px monospace;color:var(--muted);padding:12px 5px;border-bottom:1px solid var(--line)}
+.causal-cell{min-width:0;border-left:1px solid var(--line);border-bottom:1px solid var(--line);padding:6px}
+.causal-cell.conversation{max-height:none;overflow:visible}
+.causal-event{border:1px solid #354260;border-radius:7px;padding:8px;background:#18202a;font-size:11px;overflow-wrap:anywhere}
+.causal-event.sent{border-left:3px solid #7c9cff}.causal-event.read{border-left:3px solid #53ad7a}.causal-event.interrupt{border-left:3px solid #f1a56d}
+.causal-event h4{margin:0 0 5px;font-size:11px}.causal-event p{margin:6px 0;white-space:pre-wrap}.causal-event a{font-size:10px}.causal-event:target{outline:2px solid #f1cb7d;scroll-margin-top:70px}
+.causal-event .message{margin-bottom:0}.causal-details{margin-top:8px}.causal-details summary{font-size:11px}
+
+.compact-inbox{font-size:12px;line-height:1.45}
+.inbox-title{padding:7px 9px;background:#20352b;color:#d7f3df;font-size:10px;font-weight:700;text-transform:uppercase}
+.inbox-item{padding:8px 0;border-bottom:1px solid var(--line)}
+.inbox-sender{font-size:11px;font-weight:650;color:#93dfb3;margin-bottom:4px}
+.inbox-text{white-space:pre-wrap;overflow-wrap:anywhere;color:var(--text)}
+.inbox-item small{display:block;margin-top:4px;font-size:10px}
+.inbox-empty{padding:8px 0;color:var(--muted);font-size:11px}
+.inbox-raw{margin-top:6px}.inbox-raw>summary{font-size:10px;color:var(--muted);padding:3px 0}
+.inbox-raw pre{max-height:240px;overflow:auto;font-size:10px}
+.agent .compact-inbox{margin:8px 0;padding:8px;border:1px solid #315443;border-radius:7px;background:#141d1a}
+.causal-graph{position:relative}.causal-graph .causal-grid{row-gap:24px;column-gap:8px}.causal-edges{position:absolute;inset:0;width:100%;height:100%;pointer-events:none;z-index:1;overflow:visible}.causal-edges>path{fill:none;stroke:#7c9cff;stroke-width:1.5;opacity:.65}.causal-event-index{font:9px monospace;color:var(--muted);margin-bottom:5px}.causal-graph .causal-heading{z-index:2}
+.causal-event.leader{border-left:3px solid #c19bff;background:#241d33}
+.leader-summary{padding:9px 12px;background:#241d33;font-size:12px;overflow-wrap:anywhere}
+.leader-overview{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;margin-bottom:14px}
+.leader-overview>div>b{display:block;padding:5px 12px}
+.leader-summary.invalid,.causal-event.leader.invalid{color:#ffb5a8}
+.causal-event.wait{border-left:3px solid #bd9af7}.causal-event.wait.invalid{border-left-color:#ef8b8b}
+.fixed-leader-badge{display:inline-block;margin-left:6px;padding:2px 6px;border:1px solid #d6b86c;border-radius:5px;background:#352d1a;color:#ffe3a1;font-size:11px;font-weight:600;vertical-align:middle}
+</style></head><body><header><b>RLTracer · Team attempts</b><a id="explorer-link" href="/explorer">Original Explorer</a><label>View <select id="view-mode"><option value="causal">Causal timeline</option><option value="conversations">Agent conversations</option></select></label><label>Split <select id="split"><option value="train">train</option><option value="eval">eval</option></select></label><label>Step <select id="steps"></select></label><button id="refresh">Refresh</button><span id="status">Loading…</span></header><main><aside><div class="muted">One attempt = four teammates.<br>Agents keep separate histories.</div><input id="search" placeholder="Find team, prompt group, or agent"><nav id="teams"></nav></aside><section id="board"><h1>Select a team attempt</h1><p class="muted">All teammates appear together. Reasoning and initial instructions are collapsed.</p></section></main><script src="message-renderer.js?v=shared-messages-20261013"></script><script src="team-messages.js?v=fixedleader-20261021"></script><script src="causal.js?v=fixedleader-20261021"></script><script src="teams.js?v=fixedleader-20261021"></script></body></html>
