@@ -259,3 +259,86 @@ training targets.
 
 - Add reward, advantage, log-probability, tool-call, and completion metadata to
   `Trajectory.metadata`.
+
+### Optional team view
+
+Launch `rltracer-viz` with `--team-view` to enable the team causal timeline.
+For a single run it becomes the landing page; `/explorer` retains the original
+trajectory viewer. Without the flag, team pages and team-list endpoints are
+disabled and the original explorer has no team-view link.
+
+Text-only multi-agent exports do not need a tokenizer:
+
+```bash
+pip install .
+rltracer-viz --run ./all --input-format file-monitor --team-view --port 8080
+```
+
+The run directory contains `monitors/file/traces/stream/*.jsonl`. Each line
+has `run.work.step`, `run.work.type` (`train` or `eval`), and a `traces`
+array. Each agent trace retains `nodes[].message` and its `info.society`
+metadata; token IDs, masks, and logprobs are not required.
+
+Loading happens in two stages:
+
+1. [`FileMonitorAdapter.load_trajectory()`](src/rltracer/file_monitor.py)
+   reads a JSON record and produces a `Trajectory` with messages and metadata.
+2. The [`/api/steps/<step>/teams` handler](src/rltracer/viz/server.py) groups
+   agent traces by `info.society.botbook_session_id`, using `agent.name` as the
+   agent slot and `info.society.public_name` as its display name. It supports
+   both PrimeRL exports and text-only file-monitor streams.
+
+Open `http://localhost:8080/teams.html?step=1&split=train` and select a team.
+The [team viewer](src/rltracer/viz/teams.js) loads each agent's trajectory,
+and the [causal timeline](src/rltracer/viz/causal.js) uses society events to show
+message sends/reads, interruptions, waits, and leader information. These links
+describe the loader and grouping code; grouping requires the society metadata
+to be present in the exported traces.
+
+### Inspect a team, step by step
+
+1. Start the server with `--team-view`, then open
+   `http://localhost:8080/teams.html?step=1&split=train`.
+2. Set **Split** to `train` and choose a saved **Step**. Click **Refresh** to
+   discover newly saved data. A saved rollout step is not proof that its optimizer
+   update has completed.
+3. Select an **Attempt** in the left sidebar. Its label shows the session ID,
+   public agent names, and the number of saved teammates, such as **4/4 agents**.
+   Search filters this list. Fewer than four agents means an incomplete saved
+   team; do not interpret missing traces as incorrect answers.
+4. Choose **Agent conversations** for a separate column per agent. Read the
+   system/user messages, reasoning, assistant replies, and tool calls/results.
+   Use this view to establish exactly what each agent saw.
+5. Choose **Causal timeline** to follow sends, inbox reads, interruptions,
+   resumptions, and wait events. A send does not mean the recipient read it.
+   Follow the **Read by** / **From** links to connect delivery events. Expand
+   **Raw result** when you need the original tool payload.
+6. The **Fixed leader** badge identifies the designated leader when recorded
+   metadata is consistent. In fixed-leader runs, inspect that agent's submission
+   and the recorded team reward; another teammate being correct alone does not
+   establish team success. Leader-selection events are shown for older runs that
+   used dynamic selection.
+7. Use **Original Explorer** for individual trajectories.
+
+The timeline shows causal dependencies, not a wall-clock chart. Cards on the
+same horizontal row need not have executed at the same instant. Agent aliases
+can change between attempts; use the session ID to identify a team.
+
+### Inspect the team objects directly
+
+With the server running:
+
+```bash
+curl 'http://localhost:8080/api/steps/1/teams?split=train'
+curl 'http://localhost:8080/api/trajectories/123?team=1'
+```
+
+Replace `123` with an agent `id` from the first response. The first endpoint
+returns team objects (`id`, `group_id`, `seed`, `agents`); the second returns
+one agent's `messages`, outcomes, and `metadata.society`. A GRPO `group_id`
+can contain multiple independent team attempts; it is **not** the team identity.
+Teams are grouped by `society.botbook_session_id`.
+
+If the team list is empty, check the selected step/split and that the exported
+traces retain `info.society.botbook_session_id`, `agent.name`, and their messages.
+The text-only format does not reconstruct missing team membership.

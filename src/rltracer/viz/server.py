@@ -167,7 +167,7 @@ def trace_outcome(trace: object) -> dict[str, object]:
     }
 
 
-def make_handler(registry: TraceRegistry):
+def make_handler(registry: TraceRegistry, team_view: bool = False):
     monitor_lock = threading.RLock()
     class Handler(SimpleHTTPRequestHandler):
         def __init__(self, *args, **kwargs):
@@ -185,11 +185,19 @@ def make_handler(registry: TraceRegistry):
             query = parse_qs(parsed.query)
             split = query.get("split", [None])[0]
             selected_run = query.get("run", [None])[0]
+            if path == "/api/config":
+                return send(self, {"team_view": team_view})
+            if not team_view and (path in {"/teams.html", "/teams.js", "/causal.js", "/team-messages.js"}
+                                  or (path.startswith("/api/steps/") and path.endswith("/teams"))):
+                return send(self, {"error": "Team view is disabled; launch with --team-view"}, HTTPStatus.NOT_FOUND)
             if split not in {None, "train", "eval"}:
                 return send(self, {"error": f"Unknown trace split {split!r}"}, HTTPStatus.BAD_REQUEST)
             try:
                 if path in {"/", "/browse"} and registry.browse_root is not None:
                     self.path = "/browse.html"
+                    return super().do_GET()
+                if path == "/" and team_view:
+                    self.path = "/teams.html"
                     return super().do_GET()
                 if path == "/explorer":
                     self.path = "/index.html"
@@ -201,6 +209,45 @@ def make_handler(registry: TraceRegistry):
                 tracer = registry.tracer(selected_run)
                 if path == "/api/steps":
                     return send(self, [{"number": step} for step in tracer.adapter.list_steps(split)])
+                if path.startswith('/api/steps/') and path.endswith('/teams'):
+                    step_number = int(path.split('/')[3])
+                    adapter = tracer.adapter
+                    if not isinstance(adapter, (PrimeRLAdapter, FileMonitorAdapter)):
+                        return send(self, [])
+                    adapter.ensure_step_indexed(step_number)
+                    teams = {}
+                    def team_records():
+                        if isinstance(adapter, FileMonitorAdapter):
+                            rows = adapter.db.execute(
+                                "SELECT id FROM trajectories WHERE step=?" + (" AND split=?" if split else ""),
+                                (step_number, split) if split else (step_number,),
+                            ).fetchall()
+                            for row in rows:
+                                trajectory = adapter.load_trajectory(row["id"])
+                                yield row["id"], trajectory.messages, trajectory.metadata.get("trace") or {}
+                        else:
+                            indexed = {(row['shard'], row['row_i']): row['id'] for row in
+                                       adapter.db.execute('SELECT id,shard,row_i FROM trajectories WHERE step=?', (step_number,))}
+                            for file in adapter._trace_files(step_number):
+                                if split and split not in file.parts:
+                                    continue
+                                for line, messages, record in adapter._iter_trace_file(file):
+                                    yield indexed.get((str(file), line)), messages, record
+                    for trace_id, messages, record in team_records():
+                        info = record.get('info') or {}
+                        society = info.get('society') or {}
+                        session = society.get('botbook_session_id')
+                        if not session or trace_id is None:
+                            continue
+                        team = teams.setdefault(session, {'id': session, 'group_id': info.get('group_id'),
+                            'seed': society.get('seed'), 'agents': {}})
+                        slot = record.get('agent', {}).get('name', '')
+                        team['agents'][slot] = {'id': trace_id, 'slot': slot,
+                            'name': society.get('public_name') or slot,
+                            'answer': society.get('answer'), 'messages': len(messages),
+                            'success': (record.get('metrics') or {}).get('team_success')}
+                    return send(self, [{**team, 'agents': sorted(team['agents'].values(), key=lambda a: a['slot'])}
+                                       for team in teams.values()])
                 if path.startswith("/api/steps/") and path.endswith("/prompts"):
                     step = tracer.step(int(path.split("/")[3]))
                     pass_rates = step_prompt_pass_rates(tracer.adapter, step.number, split)
@@ -236,6 +283,9 @@ def make_handler(registry: TraceRegistry):
                     trace = tracer.adapter.load_trajectory(int(path.rsplit("/", 1)[1]))
                     outcome = trace_outcome(trace)
                     metadata = {key: value for key, value in trace.metadata.items() if key != "trace"}
+                    if team_view and query.get("team", [""])[0] == "1":
+                        record = trace.metadata.get("trace") or {}
+                        metadata["society"] = (record.get("info") or {}).get("society") or {}
                     return send(self, {"id": trace.id, "step": trace.step, "messages": trace.messages, "metadata": metadata, "outcome": outcome})
                 return super().do_GET()
             except (KeyError, ValueError, IndexError) as error:
@@ -254,8 +304,9 @@ def serve(
     index_path: str | None = None,
     host: str = "127.0.0.1",
     port: int = 8787,
+    team_view: bool = False,
 ) -> None:
-    """Serve one trace run or a browsable directory of PrimeRL runs."""
+    """Serve traces. Use --team-view to enable the team causal timeline and make it the run landing page."""
     if run is None and browse_root is None:
         raise ValueError("provide --run or --browse-root")
     if input_format not in {"primerl", "workflow-jsonl", "file-monitor"}:
@@ -271,12 +322,12 @@ def serve(
     browse_path = Path(browse_root) if browse_root else None
     index = Path(index_path) if index_path else None
     registry = TraceRegistry(tokenizer, run_path, browse_path, index, input_format)
-    landing = "/browse" if browse_path else "/explorer"
+    landing = "/browse" if browse_path else ("/teams.html" if team_view else "/explorer")
     print(f"RLTracer Explorer: http://{host}:{port}{landing}")
     if browse_path:
         print(f"Browse root: {browse_path.resolve()}")
     try:
-        HTTPServer((host, port), make_handler(registry)).serve_forever()
+        HTTPServer((host, port), make_handler(registry, team_view=team_view)).serve_forever()
     finally:
         registry.close()
 

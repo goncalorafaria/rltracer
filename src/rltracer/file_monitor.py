@@ -1,7 +1,6 @@
 """Reader for PrimeRL file-monitor JSONL trace streams."""
 from __future__ import annotations
 
-import hashlib
 import json
 import mmap
 import re
@@ -55,6 +54,18 @@ class FileMonitorAdapter:
         if "split" not in columns:
             self.db.execute("ALTER TABLE trajectories ADD COLUMN split TEXT")
         self.db.execute("CREATE INDEX IF NOT EXISTS by_step_split_prompt ON trajectories(step, split, prompt_key, id)")
+        # A per-file cursor replaces the old per-step, ordered-stream cache.
+        self.db.execute("CREATE TABLE IF NOT EXISTS stream_cursors(path TEXT PRIMARY KEY, inode TEXT, size INTEGER, mtime_ns INTEGER, offset INTEGER)")
+        self.db.execute("CREATE TABLE IF NOT EXISTS monitor_index_version(version INTEGER)")
+        if self.db.execute("SELECT version FROM monitor_index_version WHERE version=5").fetchone() is None:
+            self.db.execute("DELETE FROM trajectories")
+            self.db.execute("DELETE FROM indexed_steps")
+            self.db.execute("DELETE FROM indexed_step_splits")
+            self.db.execute("DELETE FROM stream_cursors")
+            self.db.execute("DELETE FROM monitor_index_version")
+            self.db.execute("INSERT INTO monitor_index_version VALUES(5)")
+        self.db.commit()
+
 
     def _files(self) -> list[Path]:
         if time.monotonic() - self._files_checked > 5:
@@ -260,113 +271,89 @@ class FileMonitorAdapter:
         return max(steps) if steps else None
 
     def list_steps(self, split: str | None = None) -> list[int]:
-        if split in {"train", "eval"}:
-            steps = self.db.execute("SELECT step FROM indexed_step_splits WHERE split=? ORDER BY step", (split,))
-        else:
-            steps = self.db.execute("SELECT step FROM indexed_steps ORDER BY step")
-        found = {row[0] for row in steps}
+        self._sync_streams()
+        where = " WHERE split=?" if split is not None else ""
+        params = (split,) if split is not None else ()
+        return [row[0] for row in self.db.execute(
+            "SELECT DISTINCT step FROM trajectories" + where + " ORDER BY step", params
+        )]
+
+    def _index_record(self, path: Path, row_i: int, record: dict[str, Any], byte_offset: int | None) -> None:
+        record_split = self._split(record)
+        for trace in record.get("traces", []):
+            if not isinstance(trace, dict):
+                continue
+            step = self._step(record, trace)
+            if step is None:
+                continue
+            messages = self._trace_messages(trace)
+            if not messages:
+                continue
+            key, preview = fingerprint(messages, self.prompt_parser)
+            correct = (trace.get("metrics") or {}).get("correct_final_label")
+            if isinstance(correct, bool):
+                correct = float(correct)
+            elif not isinstance(correct, (int, float)):
+                correct = None
+            self.db.execute(
+                "INSERT INTO trajectories(step,prompt_key,preview,shard,row_i,trace_id,byte_offset,correct_final_label,split) VALUES(?,?,?,?,?,?,?,?,?)",
+                (step, key, preview, str(path), row_i, str(trace.get("id", "")), byte_offset, correct, record_split),
+            )
+
+    def _sync_streams(self) -> None:
+        # Rollouts finish asynchronously: any chunk can contain any step/split.
+        # Index all completed records once, then consume only appended bytes.
+        deadline = time.monotonic() + 2.0
         files = self._files()
-        metadata = [self._first_step(path) for path in files]
-        eval_steps = {first_step for first_step, file_split in metadata if first_step is not None and file_split == "eval"}
-        train_first_steps = [first_step for first_step, file_split in metadata if first_step is not None and file_split == "train"]
-        latest_trace_step = self._latest_plain_trace_step()
-        metric_steps = self._steps_from_metrics()
-        if split == "eval":
-            found = eval_steps
-        elif latest_trace_step is not None:
-            # Metrics include the full training history; cap them at the newest
-            # step that actually has a saved rollout trace.
-            found.update(step for step in metric_steps if step <= latest_trace_step)
-            found.add(latest_trace_step)
-        else:
-            found.update(metric_steps)
-        if split == "train":
-            # Hide startup eval-only steps before the first train rollout.
-            if train_first_steps:
-                found = {step for step in found if step >= min(train_first_steps)}
-            return sorted(found)
-        return sorted(found | eval_steps if split is None else found)
+        paths = {str(path) for path in files}
+        with self.db:
+            for row in self.db.execute("SELECT path FROM stream_cursors").fetchall():
+                if row[0] not in paths:
+                    self.db.execute("DELETE FROM trajectories WHERE shard=?", (row[0],))
+                    self.db.execute("DELETE FROM stream_cursors WHERE path=?", (row[0],))
+            for path in files:
+                stat = path.stat()
+                inode = str(stat.st_ino)
+                saved = self.db.execute("SELECT * FROM stream_cursors WHERE path=?", (str(path),)).fetchone()
+                if saved and saved["offset"] >= stat.st_size and (saved["inode"], saved["size"], saved["mtime_ns"]) == (inode, stat.st_size, stat.st_mtime_ns):
+                    continue
+                plain = path.name.endswith(".jsonl")
+                append = saved and plain and saved["inode"] == inode and (stat.st_size > saved["size"] or (stat.st_size == saved["size"] and stat.st_mtime_ns == saved["mtime_ns"]))
+                offset = saved["offset"] if append else 0
+                if not append:
+                    self.db.execute("DELETE FROM trajectories WHERE shard=?", (str(path),))
+                if plain:
+                    with path.open("rb") as handle:
+                        handle.seek(offset)
+                        # Snapshot size avoids chasing an actively growing file.
+                        while handle.tell() < stat.st_size:
+                            start = handle.tell()
+                            line = handle.readline(stat.st_size - start)
+                            if not line.endswith(b"\n"):
+                                break  # Retry this unfinished record after append.
+                            offset = handle.tell()
+                            try:
+                                record = json.loads(line)
+                            except (json.JSONDecodeError, UnicodeDecodeError):
+                                continue
+                            if isinstance(record, dict):
+                                self._index_record(path, start, record, start)
+                            if time.monotonic() >= deadline:
+                                break
+                else:
+                    # Compressed chunks cannot be sought by uncompressed offset.
+                    for row_i, record in self._records(path):
+                        self._index_record(path, row_i, record, None)
+                    offset = stat.st_size
+                self.db.execute(
+                    "INSERT OR REPLACE INTO stream_cursors VALUES(?,?,?,?,?)",
+                    (str(path), inode, stat.st_size, stat.st_mtime_ns, offset),
+                )
+                if time.monotonic() >= deadline:
+                    break
 
     def ensure_step_indexed(self, step: int, split: str | None = None) -> None:
-        # Chunks start at monotonically increasing steps. Select the newest
-        # chunk that could contain this step, then stop at the step boundary.
-        files = self._files()
-        eligible = [
-            (first, file_split, path)
-            for path in files
-            for first, file_split in [self._first_step(path)]
-            if first is not None and first <= step
-        ]
-        selected: dict[str | None, tuple[int, Path]] = {}
-        for first, file_split, path in eligible:
-            if split is not None and file_split != split:
-                continue
-            if file_split not in selected or first > selected[file_split][0]:
-                selected[file_split] = (first, path)
-        files = [item[1] for item in selected.values()]
-        def source_signature() -> str:
-            # Chunks are append-only while a run is active; a rotated/new chunk
-            # changes the signature and triggers a fresh index.
-            return f"file-monitor-v4-{split or 'all'}:" + hashlib.sha256("|".join(f"{p}:{p.stat().st_ino}" for p in files).encode()).hexdigest()
-
-        signature = source_signature()
-        if split is None:
-            existing = self.db.execute("SELECT signature FROM indexed_steps WHERE step=?", (step,)).fetchone()
-        else:
-            existing = self.db.execute("SELECT signature FROM indexed_step_splits WHERE step=? AND split=?", (step, split)).fetchone()
-        if existing and existing["signature"] == signature:
-            return
-        if split is None:
-            self.db.execute("DELETE FROM trajectories WHERE step=?", (step,))
-        else:
-            self.db.execute("DELETE FROM trajectories WHERE step=? AND split=?", (step, split))
-        for path in files:
-            reverse = path.name.endswith(".jsonl")
-            source = (
-                self._reverse_jsonl_records(path)
-                if reverse
-                else ((row_i, record) for row_i, record in self._records(path))
-            )
-            found_step = False
-            for row_i, record in source:
-                record_steps = [
-                    trace_step
-                    for trace in record.get("traces", [])
-                    if isinstance(trace, dict)
-                    if (trace_step := self._step(record, trace)) is not None
-                ]
-                if found_step and record_steps and (max(record_steps) < step if reverse else min(record_steps) > step):
-                    break
-                if step in record_steps:
-                    found_step = True
-                record_split = self._split(record)
-                for trace in record.get("traces", []):
-                    if not isinstance(trace, dict) or self._step(record, trace) != step:
-                        continue
-                    messages = self._trace_messages(trace)
-                    if not messages:
-                        continue
-                    key, preview = fingerprint(messages, self.prompt_parser)
-                    metrics = trace.get("metrics") or {}
-                    correct = metrics.get("correct_final_label")
-                    if isinstance(correct, bool):
-                        correct = float(correct)
-                    elif not isinstance(correct, (int, float)):
-                        correct = None
-                    self.db.execute(
-                        "INSERT INTO trajectories(step,prompt_key,preview,shard,row_i,trace_id,byte_offset,correct_final_label,split) VALUES(?,?,?,?,?,?,?,?,?)",
-                        (step, key, preview, str(path), row_i, str(trace.get("id", "")), row_i if reverse else None, correct, record_split),
-                    )
-        # Record the post-scan signature: active monitor chunks may still be
-        # appended while a several-GB file is being indexed.
-        if split is None:
-            self.db.execute("INSERT OR REPLACE INTO indexed_steps VALUES(?,?)", (step, source_signature()))
-        else:
-            self.db.execute(
-                "INSERT OR REPLACE INTO indexed_step_splits VALUES(?,?,?)",
-                (step, split, source_signature()),
-            )
-        self.db.commit()
+        self._sync_streams()
 
     def list_prompts(self, step: int, split: str | None = None) -> list[tuple[str, int, str]]:
         self.ensure_step_indexed(step, split)
